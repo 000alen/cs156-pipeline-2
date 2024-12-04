@@ -200,9 +200,11 @@ def train(
     scheduler,
     scaler,
     writer,
-    num_epochs=10,
+    num_epochs=20,
     accumulation_steps=4,
     patience=2,
+    save_every: int = 2000,
+    log_every: int = 1000,
 ):
     best_loss = float("inf")
     patience_counter = 0
@@ -257,8 +259,8 @@ def train(
                 }
             )
 
-            # Log to tensorboard every 1000 iterations
-            if batch_idx % 1000 == 0:
+            # Log to tensorboard every log_every iterations
+            if batch_idx % log_every == 0:
                 step = epoch * len(dataloader) + batch_idx
                 writer.add_scalar(
                     "Loss/total_step", loss.item() * accumulation_steps, step
@@ -266,8 +268,8 @@ def train(
                 writer.add_scalar("Loss/ce_step", ce_loss.item(), step)
                 writer.add_scalar("Loss/kld_step", kld_loss.item(), step)
 
-            # Save checkpoint every 5000 batches
-            if batch_idx % 2000 == 0:
+            # Save checkpoint every save_every iterations
+            if batch_idx % save_every == 0:
                 checkpoint_path = f"checkpoints/model_epoch{epoch}_batch{batch_idx}.pt"
                 torch.save(
                     {
@@ -351,34 +353,39 @@ def train(
     writer.close()
 
 
-def main():
+def main(
+    file_path: str,
+    max_emails: Optional[int] = None,
+    num_topics: int = 5,
+    num_epochs: int = 20,
+    accumulation_steps: int = 4,
+    patience: int = 2,
+    seq_length: int = 100,
+):
     # Device configuration (use GPU if available)
     logger.info(f"Using device: {device}")
 
     # Load the emails
-    mbox_path = Path("emails.mbox")
+    mbox_path = Path(file_path)
 
     df = load_checkpoint("emails_df")
-    if not df:
-        df = load_emails(str(mbox_path), max_emails=100)
+    if df is None:
+        df = load_emails(str(mbox_path), max_emails=max_emails)
         save_checkpoint(df, "emails_df")
 
     # Apply preprocessing
     preprocessed_df = load_checkpoint("preprocessed_df")
-    if not preprocessed_df:
+    if preprocessed_df is None:
         preprocessed_df = preprocess_data(df)
         save_checkpoint(preprocessed_df, "preprocessed_df")
 
     df = preprocessed_df
 
-    # Extract the texts for topic modeling
-    texts = df["Text"].tolist()
-
     processed_texts = load_checkpoint("processed_texts")
     if processed_texts is None:
         processed_texts = [
             preprocess_text_for_topic_modeling(text)
-            for text in tqdm(texts, desc="Processing texts")
+            for text in tqdm(df["Text"].tolist(), desc="Processing texts")
         ]
         save_checkpoint(processed_texts, "processed_texts")
 
@@ -397,7 +404,6 @@ def main():
         save_checkpoint(corpus, "corpus")
 
     # Train LDA model
-    num_topics = 5  # Adjust based on your data
     lda_model = load_checkpoint("lda_model")
     if lda_model is None:
         lda_model = models.LdaModel(
@@ -444,7 +450,6 @@ def main():
         save_checkpoint(idx2char, "idx2char")
 
     vocab_size = len(char2idx)
-    seq_length = 100  # Adjust based on your data
 
     # Prepare the dataset and dataloader
     dataset = EmailDataset(
@@ -478,8 +483,18 @@ def main():
 
     model = optimize_model_for_training(model)
 
-    train(model, dataloader, optimizer, scheduler, scaler, writer)
+    train(
+        model,
+        dataloader,
+        optimizer,
+        scheduler,
+        scaler,
+        writer,
+        num_epochs=num_epochs,
+        accumulation_steps=accumulation_steps,
+        patience=patience,
+    )
 
 
 if __name__ == "__main__":
-    main()
+    main("emails-uni.mbox")
