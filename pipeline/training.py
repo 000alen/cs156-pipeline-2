@@ -377,6 +377,7 @@ def train(
                             # Update input sequence
                             input_seq = torch.cat([input_seq[:, 1:], next_char_idx], dim=1)
                         
+                        print(f"\nGenerated sample at step {step}:\n{generated_text}\n{'-'*50}")
                         logger.info(f"\nGenerated sample at step {step}:\n{generated_text}\n{'-'*50}")
                     model.train()
 
