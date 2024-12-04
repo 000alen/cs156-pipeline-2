@@ -368,18 +368,11 @@ def main(
     # Load the emails
     mbox_path = Path(file_path)
 
-    df = load_checkpoint("emails_df")
+    df = load_checkpoint("preprocessed_df")
     if df is None:
         df = load_emails(str(mbox_path), max_emails=max_emails)
-        save_checkpoint(df, "emails_df")
-
-    # Apply preprocessing
-    preprocessed_df = load_checkpoint("preprocessed_df")
-    if preprocessed_df is None:
-        preprocessed_df = preprocess_data(df)
-        save_checkpoint(preprocessed_df, "preprocessed_df")
-
-    df = preprocessed_df
+        df = preprocess_data(df)
+        save_checkpoint(df, "preprocessed_df")
 
     processed_texts = load_checkpoint("processed_texts")
     if processed_texts is None:
@@ -432,15 +425,11 @@ def main(
         ]
         save_checkpoint(topic_vectors, "topic_vectors")
 
-    # Add topic vectors to the DataFrame
-    df["TopicVector"] = topic_vectors
-
-    # Create character mapping
-    all_text = " ".join(df["Text"])
-    chars = sorted(list(set(all_text)))
-
     char2idx = load_checkpoint("char2idx")
     if char2idx is None:
+        # Create character mapping
+        all_text = " ".join(df["Text"])
+        chars = sorted(list(set(all_text)))
         char2idx = {char: idx for idx, char in enumerate(chars)}
         save_checkpoint(char2idx, "char2idx")
 
@@ -454,9 +443,7 @@ def main(
 
     # Prepare the dataset and dataloader
     logger.info("Creating dataset...")
-    dataset = EmailDataset(
-        df["Text"].tolist(), df["TopicVector"].tolist(), char2idx, seq_length
-    )
+    dataset = EmailDataset(df["Text"].tolist(), topic_vectors, char2idx, seq_length)
     logger.info(f"Dataset size: {len(dataset)} samples")
 
     # num_workers = max(cpu_count() - 1, 1)
