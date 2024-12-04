@@ -298,8 +298,8 @@ def train(
                         model.eval()
                         with torch.no_grad():
                             # Use the first sequence from the batch as seed
-                            seed_seq = input_seq[0:1]
-                            seed_topic = topic_vec[0:1]
+                            seed_seq = input_seq[0:1]  # Shape: [1, seq_len]
+                            seed_topic = topic_vec[0:1]  # Shape: [1, topic_dim]
                             generated_text = ""
                             
                             # Convert initial sequence to text
@@ -309,19 +309,20 @@ def train(
                             generated_text += " -> "  # Separator
                             
                             # Generate 50 new characters
-                            current_seq = seed_seq
+                            current_seq = seed_seq  # Shape: [1, seq_len]
                             for _ in range(50):
-                                logits, _, _ = model(current_seq, seed_topic)
-                                next_char_logits = logits[0, -1, :]
+                                logits, _, _ = model(current_seq, seed_topic)  # logits shape: [1, seq_len, vocab_size]
+                                next_char_logits = logits[0, -1, :]  # Shape: [vocab_size]
                                 next_char_probs = F.softmax(next_char_logits, dim=-1)
-                                next_char_idx = torch.multinomial(next_char_probs, 1)
+                                next_char_idx = torch.multinomial(next_char_probs, 1)  # Shape: [1]
                                 next_char = dataloader.dataset.idx2char[next_char_idx.item()]
                                 generated_text += next_char
                                 
                                 # Update sequence for next iteration
+                                next_char_idx = next_char_idx.unsqueeze(0)  # Shape: [1, 1]
                                 current_seq = torch.cat([
-                                    current_seq[:, 1:],
-                                    next_char_idx.unsqueeze(0).unsqueeze(0)
+                                    current_seq[:, 1:],  # Remove first character
+                                    next_char_idx.unsqueeze(0)  # Add new character, shape: [1, 1, 1]
                                 ], dim=1)
                             
                             logger.info(f"Sample text: {generated_text}")
