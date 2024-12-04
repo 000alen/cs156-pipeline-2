@@ -455,15 +455,15 @@ def main(
     dataset = EmailDataset(
         df["Text"].tolist(), df["TopicVector"].tolist(), char2idx, seq_length
     )
-    num_workers = max(cpu_count() - 1, 1)
+    # num_workers = max(cpu_count() - 1, 1)
     dataloader = DataLoader(
         dataset,
         batch_size=256,
         shuffle=True,
-        num_workers=num_workers,
+        num_workers=4,
         pin_memory=True,
-        persistent_workers=True,
-        prefetch_factor=2,
+        # persistent_workers=True,
+        # prefetch_factor=2,
     )
 
     # Model hyperparameters
