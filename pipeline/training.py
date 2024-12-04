@@ -374,22 +374,21 @@ def main(
         df = preprocess_data(df)
         save_checkpoint(df, "preprocessed_df")
 
-    processed_texts = load_checkpoint("processed_texts")
-    if processed_texts is None:
-        processed_texts = [
-            preprocess_text_for_topic_modeling(text)
-            for text in tqdm(df["Text"].tolist(), desc="Processing texts")
-        ]
-        save_checkpoint(processed_texts, "processed_texts")
-
     # Create dictionary and corpus for LDA
     dictionary = load_checkpoint("dictionary")
-    if dictionary is None:
+    corpus = load_checkpoint("corpus")
+    if dictionary is None or corpus is None:
+        processed_texts = load_checkpoint("processed_texts")
+        if processed_texts is None:
+            processed_texts = [
+                preprocess_text_for_topic_modeling(text)
+                for text in tqdm(df["Text"].tolist(), desc="Processing texts")
+            ]
+            save_checkpoint(processed_texts, "processed_texts")
+
         dictionary = corpora.Dictionary(processed_texts)
         save_checkpoint(dictionary, "dictionary")
 
-    corpus = load_checkpoint("corpus")
-    if corpus is None:
         corpus = [
             dictionary.doc2bow(text)
             for text in tqdm(processed_texts, desc="Creating corpus")
@@ -408,17 +407,17 @@ def main(
         )
         save_checkpoint(lda_model, "lda_model")
 
-    # Get topic distributions for each document
-    topic_distributions = load_checkpoint("topic_distributions")
-    if topic_distributions is None:
-        topic_distributions = [
-            lda_model.get_document_topics(bow)
-            for bow in tqdm(corpus, desc="Getting topic distributions")
-        ]
-        save_checkpoint(topic_distributions, "topic_distributions")
-
     topic_vectors = load_checkpoint("topic_vectors")
     if topic_vectors is None:
+        # Get topic distributions for each document
+        topic_distributions = load_checkpoint("topic_distributions")
+        if topic_distributions is None:
+            topic_distributions = [
+                lda_model.get_document_topics(bow)
+                for bow in tqdm(corpus, desc="Getting topic distributions")
+            ]
+            save_checkpoint(topic_distributions, "topic_distributions")
+
         topic_vectors = [
             topic_vector(td, num_topics)
             for td in tqdm(topic_distributions, desc="Creating topic vectors")
