@@ -449,17 +449,17 @@ def main(
     dataset = EmailDataset(df["Text"].tolist(), topic_vectors, char2idx, seq_length)
     logger.info(f"Dataset size: {len(dataset)} samples")
 
-    # num_workers = max(cpu_count() - 1, 1)
+    num_workers = max(cpu_count() - 1, 1)
     print("Creating dataloader...")
     logger.info("Creating dataloader...")
     dataloader = DataLoader(
         dataset,
-        batch_size=32,
+        batch_size=256,
         shuffle=True,
-        num_workers=4,
-        # pin_memory=True,
-        # persistent_workers=True,
-        # prefetch_factor=2,
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=4,
     )
     logger.info(f"Number of batches: {len(dataloader)}")
 
