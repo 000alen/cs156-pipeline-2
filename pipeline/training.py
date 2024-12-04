@@ -450,12 +450,17 @@ def main(
         save_checkpoint(idx2char, "idx2char")
 
     vocab_size = len(char2idx)
+    logger.info(f"Vocabulary size: {vocab_size}")
 
     # Prepare the dataset and dataloader
+    logger.info("Creating dataset...")
     dataset = EmailDataset(
         df["Text"].tolist(), df["TopicVector"].tolist(), char2idx, seq_length
     )
+    logger.info(f"Dataset size: {len(dataset)} samples")
+
     # num_workers = max(cpu_count() - 1, 1)
+    logger.info("Creating dataloader...")
     dataloader = DataLoader(
         dataset,
         batch_size=256,
@@ -465,23 +470,33 @@ def main(
         # persistent_workers=True,
         # prefetch_factor=2,
     )
+    logger.info(f"Number of batches: {len(dataloader)}")
 
     # Model hyperparameters
     embedding_dim = 256
     hidden_dim = 512
     latent_dim = 64
+    logger.info("Model hyperparameters:")
+    logger.info(f"- Embedding dimension: {embedding_dim}")
+    logger.info(f"- Hidden dimension: {hidden_dim}")
+    logger.info(f"- Latent dimension: {latent_dim}")
 
     # Initialize model, optimizer, scheduler, and other components
+    logger.info("Initializing model...")
     model = TopicGuidedVAE(
         vocab_size, embedding_dim, hidden_dim, latent_dim, num_topics
     ).to(device)
+    logger.info(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
+    logger.info("Setting up optimizer and scheduler...")
     optimizer = AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
     scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=1)
     scaler = GradScaler()
     writer = SummaryWriter("runs/topic_guided_vae")
 
+    logger.info("Optimizing model for training...")
     model = optimize_model_for_training(model)
+    logger.info("Setup complete!")
 
     train(
         model,
