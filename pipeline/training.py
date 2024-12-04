@@ -454,12 +454,13 @@ def main(
     logger.info("Creating dataloader...")
     dataloader = DataLoader(
         dataset,
-        batch_size=256,
+        # batch_size=256,
+        batch_size=128,
         shuffle=True,
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=True,
-        prefetch_factor=4,
+        prefetch_factor=2,
     )
     logger.info(f"Number of batches: {len(dataloader)}")
 
