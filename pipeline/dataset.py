@@ -8,6 +8,13 @@ class EmailDataset(Dataset):
         self.topic_vectors = topic_vectors
         self.char2idx = char2idx
         self.seq_length = seq_length
+        # Add special tokens if they don't exist
+        if '<unk>' not in self.char2idx:
+            self.char2idx['<unk>'] = len(self.char2idx)
+        if '<pad>' not in self.char2idx:
+            self.char2idx['<pad>'] = len(self.char2idx)
+        self.unk_idx = self.char2idx['<unk>']
+        self.pad_idx = self.char2idx['<pad>']
         self._calculate_valid_indices()
 
     def _calculate_valid_indices(self):
@@ -22,6 +29,10 @@ class EmailDataset(Dataset):
     def __len__(self):
         return len(self.text_mappings)
 
+    def _encode_sequence(self, sequence):
+        """Safely encode a sequence of characters to indices."""
+        return [self.char2idx.get(char, self.unk_idx) for char in sequence]
+
     def __getitem__(self, idx):
         text_idx, pos = self.text_mappings[idx]
         text = self.texts[text_idx]
@@ -30,9 +41,9 @@ class EmailDataset(Dataset):
         # Get the sequence slice
         sequence = text[pos:pos + self.seq_length + 1]
         
-        # Encode the sequence
+        # Encode the sequence with proper handling of unknown characters
         encoded = torch.tensor(
-            [self.char2idx.get(char, 0) for char in sequence],
+            self._encode_sequence(sequence),
             dtype=torch.long
         )
         

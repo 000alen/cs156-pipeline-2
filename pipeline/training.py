@@ -178,21 +178,22 @@ def topic_vector(topic_dist, num_topics):
 def optimize_model_for_training(model):
     # Enable cuDNN benchmarking
     torch.backends.cudnn.benchmark = True
+    
+    # Enable TF32 for better performance on Ampere GPUs
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
 
-    # Disable gradient calculation for validation
-    torch.set_grad_enabled(True)
-
-    # Move model to GPU and use channels_last memory format
+    # Move model to GPU
     model = model.to(device)
-    model = model.to(memory_format=torch.channels_last)
-
-    # # JIT compile the model if possible
-    # if torch.cuda.is_available():
-    #     try:
-    #         model = torch.compile(model)
-    #     except RuntimeError:
-    #         logger.warning("Could not compile model with torch.compile() - continuing without compilation")
-
+    
+    # Compile model with torch 2.0+
+    if hasattr(torch, 'compile'):
+        try:
+            model = torch.compile(model, mode='max-autotune')
+            logger.info("Successfully compiled model with torch.compile()")
+        except Exception as e:
+            logger.warning(f"Could not compile model: {e}")
+    
     return model
 
 
@@ -211,23 +212,28 @@ def train(
 ):
     best_loss = float("inf")
     patience_counter = 0
-
+    
+    # Pre-allocate tensors on GPU
+    torch.cuda.empty_cache()
+    torch.cuda.memory.set_per_process_memory_fraction(0.95)  # Use 95% of available GPU memory
+    
     for epoch in range(num_epochs):
         total_loss = 0
         total_ce_loss = 0
         total_kld_loss = 0
-        optimizer.zero_grad()
-
-        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{num_epochs}")
-
-        for batch_idx, (input_seq, target_seq, topic_vec) in enumerate(progress_bar):
-            # Move data to device with non_blocking=True for async transfer
-            input_seq = input_seq.to(device, non_blocking=True)
-            target_seq = target_seq.to(device, non_blocking=True)
-            topic_vec = topic_vec.to(device, non_blocking=True)
-
-            # Forward pass with mixed precision
-            with autocast(device_type="cuda", dtype=torch.float16):  # Specify dtype
+        model.train()
+        
+        # Use torch.cuda.amp.autocast context manager for the entire epoch
+        with autocast(device_type='cuda', dtype=torch.float16):
+            progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{num_epochs}")
+            
+            for batch_idx, (input_seq, target_seq, topic_vec) in enumerate(progress_bar):
+                # Efficient data transfer to GPU
+                input_seq = input_seq.to(device, non_blocking=True)
+                target_seq = target_seq.to(device, non_blocking=True)
+                topic_vec = topic_vec.to(device, non_blocking=True)
+                
+                # Forward pass
                 logits, mu, logvar = model(input_seq, topic_vec)
                 ce_loss = F.cross_entropy(
                     logits.view(-1, logits.size(-1)),
@@ -237,57 +243,55 @@ def train(
                 kld_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
                 loss = ce_loss + kld_loss
                 loss = loss / accumulation_steps
-
-            # Backward pass with scaled gradients
-            scaler.scale(loss).backward()
-
-            if (batch_idx + 1) % accumulation_steps == 0:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad()
-
-            # Update metrics (multiply loss by accumulation_steps to get actual loss)
-            total_loss += loss.item() * accumulation_steps
-            total_ce_loss += ce_loss.item()
-            total_kld_loss += kld_loss.item()
-
-            # Update progress bar
-            progress_bar.set_postfix(
-                {
-                    "loss": f"{loss.item() * accumulation_steps:.4f}",
-                    "ce_loss": f"{ce_loss.item():.4f}",
-                    "kld_loss": f"{kld_loss.item():.4f}",
-                }
-            )
-
-            # Log to tensorboard every log_every iterations
-            if batch_idx % log_every == 0:
-                step = epoch * len(dataloader) + batch_idx
-                writer.add_scalar(
-                    "Loss/total_step", loss.item() * accumulation_steps, step
-                )
-                writer.add_scalar("Loss/ce_step", ce_loss.item(), step)
-                writer.add_scalar("Loss/kld_step", kld_loss.item(), step)
-
-            # Save checkpoint every save_every iterations
-            if batch_idx % save_every == 0:
-                checkpoint_path = f"checkpoints/model_epoch{epoch}_batch{batch_idx}.pt"
-                torch.save(
+                
+                # Backward pass with scaled gradients
+                scaler.scale(loss).backward()
+                
+                if (batch_idx + 1) % accumulation_steps == 0:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad(set_to_none=True)  # More efficient than zero_grad()
+                
+                # Update metrics
+                total_loss += loss.item() * accumulation_steps
+                total_ce_loss += ce_loss.item()
+                total_kld_loss += kld_loss.item()
+                
+                # Update progress bar
+                progress_bar.set_postfix(
                     {
-                        "epoch": epoch,
-                        "batch_idx": batch_idx,
-                        "model_state_dict": model.state_dict(),
-                        "optimizer_state_dict": optimizer.state_dict(),
-                        "scheduler_state_dict": scheduler.state_dict(),
-                        "scaler_state_dict": scaler.state_dict(),
-                        "loss": loss.item() * accumulation_steps,
-                        "ce_loss": ce_loss.item(),
-                        "kld_loss": kld_loss.item(),
-                    },
-                    checkpoint_path,
+                        "loss": f"{loss.item() * accumulation_steps:.4f}",
+                        "ce_loss": f"{ce_loss.item():.4f}",
+                        "kld_loss": f"{kld_loss.item():.4f}",
+                    }
                 )
+                
+                # Log and save checkpoints
+                if batch_idx % log_every == 0:
+                    step = epoch * len(dataloader) + batch_idx
+                    writer.add_scalar("Loss/total_step", loss.item() * accumulation_steps, step)
+                    writer.add_scalar("Loss/ce_step", ce_loss.item(), step)
+                    writer.add_scalar("Loss/kld_step", kld_loss.item(), step)
+                
+                if batch_idx % save_every == 0:
+                    torch.cuda.empty_cache()  # Clear cache before saving
+                    checkpoint_path = f"checkpoints/model_epoch{epoch}_batch{batch_idx}.pt"
+                    torch.save(
+                        {
+                            "epoch": epoch,
+                            "batch_idx": batch_idx,
+                            "model_state_dict": model.state_dict(),
+                            "optimizer_state_dict": optimizer.state_dict(),
+                            "scheduler_state_dict": scheduler.state_dict(),
+                            "scaler_state_dict": scaler.state_dict(),
+                            "loss": loss.item() * accumulation_steps,
+                            "ce_loss": ce_loss.item(),
+                            "kld_loss": kld_loss.item(),
+                        },
+                        checkpoint_path,
+                    )
 
         # Handle remaining gradients after last batch
         if (batch_idx + 1) % accumulation_steps != 0:
@@ -361,7 +365,7 @@ def main(
     max_emails: Optional[int] = None,
     num_topics: int = 5,
     num_epochs: int = 20,
-    accumulation_steps: int = 4,
+    accumulation_steps: int = 8,
     patience: int = 2,
     seq_length: int = 100,
 ):
@@ -433,6 +437,9 @@ def main(
         all_text = " ".join(df["Text"])
         chars = sorted(list(set(all_text)))
         char2idx = {char: idx for idx, char in enumerate(chars)}
+        # Add special tokens
+        char2idx['<unk>'] = len(char2idx)
+        char2idx['<pad>'] = len(char2idx)
         save_checkpoint(char2idx, "char2idx")
 
     idx2char = load_checkpoint("idx2char")
@@ -449,45 +456,63 @@ def main(
     dataset = EmailDataset(df["Text"].tolist(), topic_vectors, char2idx, seq_length)
     logger.info(f"Dataset size: {len(dataset)} samples")
 
-    num_workers = max(cpu_count() - 1, 1)
-    print("Creating dataloader...")
-    logger.info("Creating dataloader...")
+    # Optimize DataLoader settings with smaller batch size
+    num_workers = min(4, cpu_count() - 1)  # Reduced number of workers
     dataloader = DataLoader(
         dataset,
-        # batch_size=256,
-        batch_size=128,
+        batch_size=32,  # Reduced batch size
         shuffle=True,
         num_workers=num_workers,
         pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=2,
+        drop_last=True,
     )
     logger.info(f"Number of batches: {len(dataloader)}")
 
     # Model hyperparameters
-    embedding_dim = 256
-    hidden_dim = 512
-    latent_dim = 64
+    embedding_dim = 128  # Reduced from 256
+    hidden_dim = 256    # Reduced from 512
+    latent_dim = 32     # Reduced from 64
+    
     logger.info("Model hyperparameters:")
     logger.info(f"- Embedding dimension: {embedding_dim}")
     logger.info(f"- Hidden dimension: {hidden_dim}")
     logger.info(f"- Latent dimension: {latent_dim}")
 
-    # Initialize model, optimizer, scheduler, and other components
-    print("Initializing model...")
-    logger.info("Initializing model...")
+    # Initialize model with smaller dimensions
     model = TopicGuidedVAE(
         vocab_size, embedding_dim, hidden_dim, latent_dim, num_topics
     ).to(device)
-    logger.info(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
-
-    logger.info("Setting up optimizer and scheduler...")
-    optimizer = AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
-    scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=1)
+    
+    # Use parameter groups with different learning rates
+    encoder_params = list(model.encoder.parameters())
+    decoder_params = list(model.decoder.parameters())
+    
+    optimizer = AdamW([
+        {'params': encoder_params, 'lr': 1e-3},
+        {'params': decoder_params, 'lr': 1e-3}
+    ], weight_decay=1e-5)
+    
+    scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=1, min_lr=1e-6)
     scaler = GradScaler()
     writer = SummaryWriter("runs/topic_guided_vae")
 
-    logger.info("Optimizing model for training...")
-    model = optimize_model_for_training(model)
-    logger.info("Setup complete!")
+    # Enable memory efficient features
+    torch.cuda.empty_cache()
+    if hasattr(torch.cuda, 'memory_stats'):
+        torch.cuda.memory_stats(device=device)
+    
+    # Set memory allocation to be more efficient
+    if hasattr(torch.cuda, 'set_per_process_memory_fraction'):
+        torch.cuda.set_per_process_memory_fraction(0.85)  # Use 85% of available memory
+    
+    # Set PyTorch to use cudnn benchmark mode
+    torch.backends.cudnn.benchmark = True
+    
+    # Enable TF32 precision where available
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
 
     train(
         model,
