@@ -7,7 +7,7 @@ import logging
 from typing import List, Dict
 
 # Import the model architecture from main.py
-from model import TopicGuidedVAE
+from .model import TopicGuidedVAE
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -35,9 +35,9 @@ def initialize_model(vocab_size: int, num_topics: int):
     """Initialize the model with the same architecture as training"""
     model = TopicGuidedVAE(
         vocab_size=vocab_size,
-        embedding_dim=256,
-        hidden_dim=512,
-        latent_dim=64,
+        embedding_dim=128,
+        hidden_dim=256,
+        latent_dim=32,
         num_topics=num_topics,
     ).to(device)
 
