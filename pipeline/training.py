@@ -209,7 +209,6 @@ def train(
     patience=2,
     save_every: int = 2000,
     log_every: int = 1000,
-    sample_every: int = 10000,
     resume_from_checkpoint: Optional[str] = None,
 ):
     start_epoch = 0
@@ -288,11 +287,45 @@ def train(
                 )
                 
                 # Log and save checkpoints
-                step = epoch * len(dataloader) + batch_idx
                 if batch_idx % log_every == 0:
+                    step = epoch * len(dataloader) + batch_idx
                     writer.add_scalar("Loss/total_step", loss.item() * accumulation_steps, step)
                     writer.add_scalar("Loss/ce_step", ce_loss.item(), step)
                     writer.add_scalar("Loss/kld_step", kld_loss.item(), step)
+                    
+                    # Generate sample text using the model
+                    if hasattr(dataloader.dataset, 'idx2char'):
+                        model.eval()
+                        with torch.no_grad():
+                            # Use the first sequence from the batch as seed
+                            seed_seq = input_seq[0:1]
+                            seed_topic = topic_vec[0:1]
+                            generated_text = ""
+                            
+                            # Convert initial sequence to text
+                            for idx in seed_seq[0][:10].cpu().numpy():  # Show first 10 chars
+                                generated_text += dataloader.dataset.idx2char[idx]
+                            
+                            generated_text += " -> "  # Separator
+                            
+                            # Generate 50 new characters
+                            current_seq = seed_seq
+                            for _ in range(50):
+                                logits, _, _ = model(current_seq, seed_topic)
+                                next_char_logits = logits[0, -1, :]
+                                next_char_probs = F.softmax(next_char_logits, dim=-1)
+                                next_char_idx = torch.multinomial(next_char_probs, 1)
+                                next_char = dataloader.dataset.idx2char[next_char_idx.item()]
+                                generated_text += next_char
+                                
+                                # Update sequence for next iteration
+                                current_seq = torch.cat([
+                                    current_seq[:, 1:],
+                                    next_char_idx.unsqueeze(0).unsqueeze(0)
+                                ], dim=1)
+                            
+                            logger.info(f"Sample text: {generated_text}")
+                        model.train()
                 
                 if batch_idx % save_every == 0:
                     torch.cuda.empty_cache()  # Clear cache before saving

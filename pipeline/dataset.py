@@ -15,6 +15,8 @@ class EmailDataset(Dataset):
             self.char2idx['<pad>'] = len(self.char2idx)
         self.unk_idx = self.char2idx['<unk>']
         self.pad_idx = self.char2idx['<pad>']
+        # Create idx2char mapping
+        self.idx2char = {idx: char for char, idx in self.char2idx.items()}
         self._calculate_valid_indices()
 
     def _calculate_valid_indices(self):
