@@ -188,7 +188,10 @@ def optimize_model_for_training(model):
 
     # JIT compile the model if possible
     if torch.cuda.is_available():
-        model = torch.compile(model)
+        try:
+            model = torch.compile(model)
+        except RuntimeError:
+            logger.warning("Could not compile model with torch.compile() - continuing without compilation")
 
     return model
 
