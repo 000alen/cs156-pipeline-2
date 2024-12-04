@@ -58,6 +58,7 @@ def generate_email(
     length: int = 500,
     temperature: float = 0.7,
     seq_length: int = 100,
+    deterministic: bool = False,
 ) -> str:
     """
     Generate an email with the given topic vector and starting text.
@@ -71,6 +72,7 @@ def generate_email(
         length: Length of text to generate
         temperature: Controls randomness (lower = more conservative)
         seq_length: Sequence length used during training
+        deterministic: Whether to use deterministic generation
 
     Returns:
         str: Generated email text
@@ -90,34 +92,21 @@ def generate_email(
             pad_size = seq_length - input_seq.size(1)
             input_seq = F.pad(input_seq, (pad_size, 0), "constant", 0)
 
-        # Get latent representation
-        mu, _ = model.encoder(input_seq, topic_vec)
-        z = mu  # Use mean for deterministic output
+        # Generate sequence using the model's generate method
+        generated_seq = model.generate(
+            input_seq,
+            topic_vec,
+            max_length=length + len(start_text),
+            temperature=temperature,
+            deterministic=deterministic
+        )
 
-        generated = start_text
+        # Convert generated indices to text
+        generated_text = ""
+        for idx in generated_seq[0].cpu().numpy():
+            generated_text += idx2char[idx]
 
-        for _ in range(length):
-            logits = model.decoder(input_seq, z, topic_vec)
-            # Apply temperature
-            logits = logits[:, -1, :] / temperature
-            probs = F.softmax(logits, dim=-1)
-
-            # Sample from the distribution
-            next_char_idx = torch.multinomial(probs, 1).item()
-            next_char = idx2char[next_char_idx]
-
-            generated += next_char
-
-            # Update input sequence
-            input_seq = torch.cat(
-                [
-                    input_seq[:, 1:],
-                    torch.tensor([[next_char_idx]], device=device, dtype=torch.long),
-                ],
-                dim=1,
-            )
-
-        return generated
+        return generated_text
 
 
 def generate_emails_for_topics(

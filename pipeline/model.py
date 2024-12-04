@@ -78,6 +78,48 @@ class TopicGuidedVAE(nn.Module):
         logits = self.decoder(x, z, topic_vec)
         return logits, mu, logvar
 
+    @torch.no_grad()
+    def generate(self, input_seq, topic_vec, max_length=500, temperature=0.7, deterministic=False):
+        """
+        Generate text sequence given an input sequence and topic vector.
+        
+        Args:
+            input_seq (torch.Tensor): Starting sequence [batch_size, seq_len]
+            topic_vec (torch.Tensor): Topic distribution [batch_size, num_topics]
+            max_length (int): Maximum length of generated sequence
+            temperature (float): Sampling temperature (lower = more conservative)
+            deterministic (bool): If True, use mean of latent distribution instead of sampling
+            
+        Returns:
+            torch.Tensor: Generated sequence indices [batch_size, max_length]
+        """
+        # Get latent representation
+        mu, logvar = self.encoder(input_seq, topic_vec)
+        if deterministic:
+            z = mu
+        else:
+            std = torch.exp(0.5 * logvar)
+            eps = torch.randn_like(std)
+            z = mu + eps * std
+        
+        # Initialize output sequence with input
+        generated = input_seq
+        
+        # Generate one token at a time
+        for _ in range(max_length - input_seq.size(1)):
+            # Get next token probabilities
+            logits = self.decoder(generated, z, topic_vec)
+            next_token_logits = logits[:, -1, :] / temperature
+            next_token_probs = F.softmax(next_token_logits, dim=-1)
+            
+            # Sample from the distribution
+            next_token = torch.multinomial(next_token_probs, 1)
+            
+            # Concatenate with generated sequence
+            generated = torch.cat([generated, next_token], dim=1)
+        
+        return generated
+
 
 def loss_function(logits, targets, mu, logvar, kld_weight=0.01):
     CE = F.cross_entropy(

@@ -197,6 +197,60 @@ def optimize_model_for_training(model):
     return model
 
 
+def evaluate_generation(model, dataloader, char2idx, idx2char, writer, global_step, num_samples=5):
+    """
+    Evaluate the model's generation capabilities during training.
+    
+    Args:
+        model: The VAE model
+        dataloader: DataLoader containing validation data
+        char2idx: Character to index mapping
+        idx2char: Index to character mapping
+        writer: TensorBoard writer
+        global_step: Current training step
+        num_samples: Number of samples to generate
+    """
+    model.eval()
+    with torch.no_grad():
+        # Get a batch of data
+        input_seq, _, topic_vec = next(iter(dataloader))
+        input_seq = input_seq[:num_samples].to(device)
+        topic_vec = topic_vec[:num_samples].to(device)
+        
+        # Generate sequences
+        generated_seqs = model.generate(
+            input_seq,
+            topic_vec,
+            max_length=200,  # Generate shorter sequences for evaluation
+            temperature=0.7,
+            deterministic=False
+        )
+        
+        # Convert sequences to text
+        original_texts = []
+        generated_texts = []
+        
+        for i in range(num_samples):
+            # Original text
+            orig_text = ""
+            for idx in input_seq[i].cpu().numpy():
+                orig_text += idx2char[idx]
+            original_texts.append(orig_text)
+            
+            # Generated text
+            gen_text = ""
+            for idx in generated_seqs[i].cpu().numpy():
+                gen_text += idx2char[idx]
+            generated_texts.append(gen_text)
+            
+            # Log to TensorBoard
+            writer.add_text(f'Generation/Sample_{i}/Original', orig_text, global_step)
+            writer.add_text(f'Generation/Sample_{i}/Generated', gen_text, global_step)
+    
+    model.train()
+    return original_texts, generated_texts
+
+
 def train(
     model,
     dataloader,
@@ -211,6 +265,8 @@ def train(
     log_every: int = 1000,
     sample_every: int = 5000,
     resume_from_checkpoint: Optional[str] = None,
+    char2idx=None,
+    idx2char=None,
 ):
     start_epoch = 0
     best_loss = float("inf")
@@ -380,6 +436,18 @@ def train(
                         print(f"\nGenerated sample at step {step}:\n{generated_text}\n{'-'*50}")
                         logger.info(f"\nGenerated sample at step {step}:\n{generated_text}\n{'-'*50}")
                     model.train()
+
+                # Evaluate generation periodically
+                if batch_idx > 0 and batch_idx % sample_every == 0:
+                    logger.info("Evaluating generation...")
+                    evaluate_generation(
+                        model,
+                        dataloader,
+                        char2idx,
+                        idx2char,
+                        writer,
+                        epoch * len(dataloader) + batch_idx
+                    )
 
         # Handle remaining gradients after last batch
         if (batch_idx + 1) % accumulation_steps != 0:
@@ -618,6 +686,8 @@ def main(
         accumulation_steps=accumulation_steps,
         patience=patience,
         resume_from_checkpoint=resume_from_checkpoint,
+        char2idx=char2idx,
+        idx2char=idx2char,
     )
 
 
