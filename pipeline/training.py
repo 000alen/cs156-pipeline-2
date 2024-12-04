@@ -310,19 +310,22 @@ def train(
                             
                             # Generate 50 new characters
                             current_seq = seed_seq  # Shape: [1, seq_len]
+                            # Get latent representation
+                            mu, _ = model.encoder(current_seq, seed_topic)
+                            z = mu  # Use mean for deterministic output
+                            
                             for _ in range(50):
-                                logits, _, _ = model(current_seq, seed_topic)  # logits shape: [1, seq_len, vocab_size]
-                                next_char_logits = logits[0, -1, :]  # Shape: [vocab_size]
-                                next_char_probs = F.softmax(next_char_logits, dim=-1)
-                                next_char_idx = torch.multinomial(next_char_probs, 1)  # Shape: [1]
+                                logits = model.decoder(current_seq, z, seed_topic)
+                                next_char_logits = logits[:, -1, :]  # Shape: [1, vocab_size]
+                                next_char_probs = F.softmax(next_char_logits / 0.7, dim=-1)  # Add temperature
+                                next_char_idx = torch.multinomial(next_char_probs, 1)  # Shape: [1, 1]
                                 next_char = dataloader.dataset.idx2char[next_char_idx.item()]
                                 generated_text += next_char
                                 
                                 # Update sequence for next iteration
-                                next_char_idx = next_char_idx.unsqueeze(0)  # Shape: [1, 1]
                                 current_seq = torch.cat([
                                     current_seq[:, 1:],  # Remove first character
-                                    next_char_idx.unsqueeze(0)  # Add new character, shape: [1, 1, 1]
+                                    next_char_idx,  # Add new character, already shaped [1, 1]
                                 ], dim=1)
                             
                             logger.info(f"Sample text: {generated_text}")
