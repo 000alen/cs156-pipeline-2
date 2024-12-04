@@ -186,12 +186,12 @@ def optimize_model_for_training(model):
     model = model.to(device)
     model = model.to(memory_format=torch.channels_last)
 
-    # JIT compile the model if possible
-    if torch.cuda.is_available():
-        try:
-            model = torch.compile(model)
-        except RuntimeError:
-            logger.warning("Could not compile model with torch.compile() - continuing without compilation")
+    # # JIT compile the model if possible
+    # if torch.cuda.is_available():
+    #     try:
+    #         model = torch.compile(model)
+    #     except RuntimeError:
+    #         logger.warning("Could not compile model with torch.compile() - continuing without compilation")
 
     return model
 
