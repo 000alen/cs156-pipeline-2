@@ -8,30 +8,36 @@ class EmailDataset(Dataset):
         self.topic_vectors = topic_vectors
         self.char2idx = char2idx
         self.seq_length = seq_length
-        self.data = self.process_texts()
+        self._calculate_valid_indices()
 
-    def process_texts(self):
-        data = []
-        for text, topic_vec in zip(self.texts, self.topic_vectors):
-            encoded = torch.tensor(
-                [self.char2idx.get(char, 0) for char in text], dtype=torch.long
-            )
-            if len(encoded) < self.seq_length + 1:
-                continue
-
-            input_seqs = encoded.unfold(0, self.seq_length, 1)
-            target_seqs = encoded[1:].unfold(0, self.seq_length, 1)
-
-            topic_vecs = torch.tensor(topic_vec, dtype=torch.float32).repeat(
-                len(input_seqs), 1
-            )
-
-            data.extend(zip(input_seqs, target_seqs, topic_vecs))
-
-        return data
+    def _calculate_valid_indices(self):
+        """Pre-calculate valid text indices and their sequence counts."""
+        self.text_mappings = []
+        for idx, text in enumerate(self.texts):
+            text_len = len(text)
+            if text_len >= self.seq_length + 1:
+                num_sequences = text_len - self.seq_length
+                self.text_mappings.extend([(idx, pos) for pos in range(num_sequences)])
 
     def __len__(self):
-        return len(self.data)
+        return len(self.text_mappings)
 
     def __getitem__(self, idx):
-        return self.data[idx]
+        text_idx, pos = self.text_mappings[idx]
+        text = self.texts[text_idx]
+        topic_vec = self.topic_vectors[text_idx]
+
+        # Get the sequence slice
+        sequence = text[pos:pos + self.seq_length + 1]
+        
+        # Encode the sequence
+        encoded = torch.tensor(
+            [self.char2idx.get(char, 0) for char in sequence],
+            dtype=torch.long
+        )
+        
+        input_seq = encoded[:-1]
+        target_seq = encoded[1:]
+        topic_vec = torch.tensor(topic_vec, dtype=torch.float32)
+
+        return input_seq, target_seq, topic_vec
