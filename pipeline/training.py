@@ -441,18 +441,20 @@ def main(
     logger.info(f"Vocabulary size: {vocab_size}")
 
     # Prepare the dataset and dataloader
+    print("Creating dataset...")
     logger.info("Creating dataset...")
     dataset = EmailDataset(df["Text"].tolist(), topic_vectors, char2idx, seq_length)
     logger.info(f"Dataset size: {len(dataset)} samples")
 
     # num_workers = max(cpu_count() - 1, 1)
+    print("Creating dataloader...")
     logger.info("Creating dataloader...")
     dataloader = DataLoader(
         dataset,
-        batch_size=256,
+        batch_size=32,
         shuffle=True,
         num_workers=4,
-        pin_memory=True,
+        # pin_memory=True,
         # persistent_workers=True,
         # prefetch_factor=2,
     )
@@ -468,6 +470,7 @@ def main(
     logger.info(f"- Latent dimension: {latent_dim}")
 
     # Initialize model, optimizer, scheduler, and other components
+    print("Initializing model...")
     logger.info("Initializing model...")
     model = TopicGuidedVAE(
         vocab_size, embedding_dim, hidden_dim, latent_dim, num_topics
