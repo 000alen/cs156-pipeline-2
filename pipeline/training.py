@@ -458,12 +458,12 @@ def main(
     num_workers = max(cpu_count() - 1, 1)
     dataloader = DataLoader(
         dataset,
-        batch_size=512,  # Increased from 256
-        shuffle=True,
+        batch_size=256,
+        shuffle=True
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=True,
-        prefetch_factor=4,
+        prefetch_factor=2,
     )
 
     # Model hyperparameters
