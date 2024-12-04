@@ -1,0 +1,7 @@
+__pycache__/
+checkpoints/
+runs
+*.zip
+*.mbox
+*.pt
+*.txt
