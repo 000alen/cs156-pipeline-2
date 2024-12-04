@@ -209,15 +209,34 @@ def train(
     patience=2,
     save_every: int = 2000,
     log_every: int = 1000,
+    sample_every: int = 10000,
+    resume_from_checkpoint: Optional[str] = None,
 ):
+    start_epoch = 0
     best_loss = float("inf")
     patience_counter = 0
+    
+    # Create checkpoints directory if it doesn't exist
+    Path("checkpoints").mkdir(exist_ok=True)
+    
+    # Resume from checkpoint if specified
+    if resume_from_checkpoint and Path(resume_from_checkpoint).exists():
+        logger.info(f"Loading checkpoint from {resume_from_checkpoint}")
+        checkpoint = torch.load(resume_from_checkpoint, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        scaler.load_state_dict(checkpoint['scaler_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        best_loss = checkpoint.get('best_loss', float('inf'))
+        patience_counter = checkpoint.get('patience_counter', 0)
+        logger.info(f"Resuming from epoch {start_epoch}")
     
     # Pre-allocate tensors on GPU
     torch.cuda.empty_cache()
     torch.cuda.memory.set_per_process_memory_fraction(0.95)  # Use 95% of available GPU memory
     
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         total_loss = 0
         total_ce_loss = 0
         total_kld_loss = 0
@@ -269,8 +288,8 @@ def train(
                 )
                 
                 # Log and save checkpoints
+                step = epoch * len(dataloader) + batch_idx
                 if batch_idx % log_every == 0:
-                    step = epoch * len(dataloader) + batch_idx
                     writer.add_scalar("Loss/total_step", loss.item() * accumulation_steps, step)
                     writer.add_scalar("Loss/ce_step", ce_loss.item(), step)
                     writer.add_scalar("Loss/kld_step", kld_loss.item(), step)
@@ -289,9 +308,39 @@ def train(
                             "loss": loss.item() * accumulation_steps,
                             "ce_loss": ce_loss.item(),
                             "kld_loss": kld_loss.item(),
+                            "best_loss": best_loss,
+                            "patience_counter": patience_counter
                         },
                         checkpoint_path,
                     )
+                
+                # Generate sample text
+                if batch_idx % sample_every == 0:
+                    model.eval()
+                    with torch.no_grad():
+                        # Use the first topic vector from the batch for sampling
+                        sample_topic_vec = topic_vec[0].unsqueeze(0)
+                        
+                        # Initialize input with start token
+                        start_text = "Dear "
+                        input_seq = torch.tensor([[dataloader.dataset.char2idx.get(c, 0) for c in start_text]], 
+                                               dtype=torch.long, device=device)
+                        
+                        # Generate sample
+                        generated_text = start_text
+                        for _ in range(200):  # Generate 200 characters
+                            logits, _, _ = model(input_seq, sample_topic_vec)
+                            next_char_logits = logits[:, -1, :] / 0.7  # temperature = 0.7
+                            next_char_probs = F.softmax(next_char_logits, dim=-1)
+                            next_char_idx = torch.multinomial(next_char_probs, 1)
+                            next_char = dataloader.dataset.idx2char[next_char_idx.item()]
+                            generated_text += next_char
+                            
+                            # Update input sequence
+                            input_seq = torch.cat([input_seq[:, 1:], next_char_idx], dim=1)
+                        
+                        logger.info(f"\nGenerated sample at step {step}:\n{generated_text}\n{'-'*50}")
+                    model.train()
 
         # Handle remaining gradients after last batch
         if (batch_idx + 1) % accumulation_steps != 0:
@@ -327,6 +376,8 @@ def train(
                     "scheduler_state_dict": scheduler.state_dict(),
                     "scaler_state_dict": scaler.state_dict(),
                     "loss": best_loss,
+                    "best_loss": best_loss,
+                    "patience_counter": patience_counter
                 },
                 "checkpoints/best_model.pt",
             )
@@ -347,6 +398,8 @@ def train(
                 "loss": avg_loss,
                 "ce_loss": avg_ce_loss,
                 "kld_loss": avg_kld_loss,
+                "best_loss": best_loss,
+                "patience_counter": patience_counter
             },
             f"checkpoints/model_epoch{epoch}.pt",
         )
@@ -368,6 +421,7 @@ def main(
     accumulation_steps: int = 8,
     patience: int = 2,
     seq_length: int = 100,
+    resume_from_checkpoint: Optional[str] = None,
 ):
     # Device configuration (use GPU if available)
     logger.info(f"Using device: {device}")
@@ -524,6 +578,7 @@ def main(
         num_epochs=num_epochs,
         accumulation_steps=accumulation_steps,
         patience=patience,
+        resume_from_checkpoint=resume_from_checkpoint,
     )
 
 
