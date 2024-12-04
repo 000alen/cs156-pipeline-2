@@ -209,6 +209,7 @@ def train(
     patience=2,
     save_every: int = 2000,
     log_every: int = 1000,
+    sample_every: int = 5000,
     resume_from_checkpoint: Optional[str] = None,
 ):
     start_epoch = 0
@@ -351,7 +352,7 @@ def train(
                         checkpoint_path,
                     )
                 
-                # Generate sample text
+                # Generate sample text periodically
                 if batch_idx % sample_every == 0:
                     model.eval()
                     with torch.no_grad():
